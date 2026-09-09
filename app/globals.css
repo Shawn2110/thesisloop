@@ -32,6 +32,12 @@ h1 { margin:0; font-size:clamp(32px,4.1vw,57px); letter-spacing:-2.5px; line-hei
 .button.secondary { background:#fff; color:var(--ink); }
 .button.primary { background:var(--green); border-color:#9ed62f; color:#1b271c; }
 .button.dark { width:100%; background:#19221d; color:#fff; border-color:#19221d; margin-top:22px; display:flex; justify-content:space-between; }
+.button:disabled,.side-note button:disabled { cursor:not-allowed; opacity:.55; }
+.system-state { min-height:230px; display:flex; align-items:center; justify-content:center; gap:10px; border:1px solid var(--line); border-radius:14px; background:#fff; color:#69746c; font-size:12px; }
+.loading-dot { width:9px; height:9px; border-radius:50%; background:var(--green); box-shadow:0 0 0 5px rgba(184,245,65,.2); }
+.error-state { justify-content:space-between; padding:24px; color:#6c403c; }
+.error-state strong,.error-state p { display:block; margin:0; }
+.error-state p { color:#89726f; font-size:10px; margin-top:7px; }
 .metrics { display:grid; grid-template-columns:repeat(4,1fr); background:#fff; border:1px solid var(--line); border-radius:14px; margin-bottom:16px; overflow:hidden; }
 .metrics article { padding:18px 20px; border-right:1px solid var(--line); min-height:116px; }
 .metrics article:last-child { border-right:0; }

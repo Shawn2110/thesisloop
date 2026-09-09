@@ -18,19 +18,6 @@ type Setup = {
   outcomeNote?: string;
 };
 
-const seed: Setup[] = [
-  { id: 1, symbol: "PLTR", setup: "Breakout", source: "Momentum leaders", thesis: "Volume expansion above the 3 week base while RS remained above 90.", plannedRisk: 2.1, createdAt: "2026-09-04", status: "open" },
-  { id: 2, symbol: "NVDA", setup: "Pullback", source: "RS leaders", thesis: "First pullback to the 21 day average after a strong earnings move.", plannedRisk: 1.8, createdAt: "2026-09-06", status: "open" },
-  { id: 3, symbol: "CRWD", setup: "Earnings gap", source: "Gap and hold", thesis: "Gap held above the opening range with volume staying above average.", plannedRisk: 2.4, createdAt: "2026-08-31", status: "open" },
-  { id: 4, symbol: "META", setup: "Tight base", source: "RS leaders", thesis: "Three tight closes near the high with improving relative strength.", plannedRisk: 1.7, createdAt: "2026-08-18", status: "closed", returnPct: 8.2, followedPlan: true, outcomeNote: "Waited for the planned trigger and raised the stop only after confirmation." },
-  { id: 5, symbol: "TSLA", setup: "Gap continuation", source: "Premarket scan", thesis: "Large premarket move with enough liquidity to continue after the open.", plannedRisk: 2.5, createdAt: "2026-08-22", status: "closed", returnPct: -2.1, followedPlan: false, outcomeNote: "Entered before the opening range was complete." },
-  { id: 6, symbol: "ARM", setup: "IPO base", source: "Momentum leaders", thesis: "Base formed above the 50 day average with volume drying up near the pivot.", plannedRisk: 2.0, createdAt: "2026-08-11", status: "closed", returnPct: 11.4, followedPlan: true, outcomeNote: "The original trigger and stop were both followed." },
-  { id: 7, symbol: "MSFT", setup: "Pullback", source: "Earnings growth", thesis: "Controlled pullback after earnings with support near the prior breakout.", plannedRisk: 1.6, createdAt: "2026-08-05", status: "closed", returnPct: 3.1, followedPlan: true, outcomeNote: "Smaller move than expected, but the setup behaved as planned." },
-  { id: 8, symbol: "AMD", setup: "Breakout", source: "Momentum leaders", thesis: "Price cleared a six week range but volume was only slightly above average.", plannedRisk: 2.2, createdAt: "2026-07-28", status: "closed", returnPct: -1.2, followedPlan: true, outcomeNote: "Stopped out according to plan. The weak volume was the warning." },
-];
-
-const storageKey = "thesisloop-setups-v1";
-
 function daysSince(date: string) {
   const diff = Date.now() - new Date(`${date}T00:00:00`).getTime();
   const days = Math.max(0, Math.floor(diff / 86400000));
@@ -54,27 +41,31 @@ function parseCsvLine(line: string) {
 
 export default function Home() {
   const [tab, setTab] = useState<Tab>("overview");
-  const [setups, setSetups] = useState<Setup[]>(seed);
-  const [selectedId, setSelectedId] = useState(1);
+  const [setups, setSetups] = useState<Setup[]>([]);
+  const [selectedId, setSelectedId] = useState(0);
   const [modal, setModal] = useState<"record" | "close" | "import" | null>(null);
   const [notice, setNotice] = useState("");
-  const [ready, setReady] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [loadError, setLoadError] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => {
-      const saved = localStorage.getItem(storageKey);
-      if (saved) {
-        try { setSetups(JSON.parse(saved) as Setup[]); } catch { localStorage.removeItem(storageKey); }
-      }
-      setReady(true);
-    }, 0);
-    return () => window.clearTimeout(timer);
+    let cancelled = false;
+    fetch("/api/setups")
+      .then(async (response) => {
+        const data = await response.json() as { setups?: Setup[]; error?: string };
+        if (!response.ok || !data.setups) throw new Error(data.error ?? "Unable to load the demo.");
+        if (!cancelled) {
+          setSetups(data.setups);
+          setSelectedId(data.setups[0]?.id ?? 0);
+          setLoadError("");
+        }
+      })
+      .catch((error: Error) => { if (!cancelled) setLoadError(error.message); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
   }, []);
-
-  useEffect(() => {
-    if (ready) localStorage.setItem(storageKey, JSON.stringify(setups));
-  }, [setups, ready]);
 
   useEffect(() => {
     if (!notice) return;
@@ -102,7 +93,7 @@ export default function Home() {
 
   const bestSource = sources[0]?.source ?? "Not enough data";
 
-  function saveSetup(event: React.FormEvent<HTMLFormElement>) {
+  async function saveSetup(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
     const item: Setup = {
@@ -115,33 +106,53 @@ export default function Home() {
       createdAt: String(data.get("date")),
       status: "open",
     };
-    setSetups((current) => [item, ...current]);
-    setSelectedId(item.id);
-    setModal(null);
-    setTab("overview");
-    setNotice(`${item.symbol} was added to the review queue.`);
+    setSaving(true);
+    try {
+      const response = await fetch("/api/setups", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(item) });
+      const result = await response.json() as { setups?: Setup[]; error?: string };
+      if (!response.ok || !result.setups?.[0]) throw new Error(result.error ?? "Unable to save the setup.");
+      const saved = result.setups[0];
+      setSetups((current) => [saved, ...current]);
+      setSelectedId(saved.id);
+      setModal(null);
+      setTab("overview");
+      setNotice(`${saved.symbol} was added to the review queue.`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Unable to save the setup.");
+    } finally {
+      setSaving(false);
+    }
   }
 
-  function closeLoop(event: React.FormEvent<HTMLFormElement>) {
+  async function closeLoop(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!selected) return;
     const data = new FormData(event.currentTarget);
-    setSetups((current) => current.map((item) => item.id === selected.id ? {
-      ...item,
-      status: "closed",
-      returnPct: Number(data.get("returnPct")),
-      followedPlan: data.get("followedPlan") === "yes",
-      outcomeNote: String(data.get("outcomeNote") ?? "").trim(),
-    } : item));
-    setModal(null);
-    setNotice(`${selected.symbol} now has an outcome.`);
+    setSaving(true);
+    try {
+      const response = await fetch("/api/setups/outcome", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({
+        id: selected.id,
+        returnPct: Number(data.get("returnPct")),
+        followedPlan: data.get("followedPlan") === "yes",
+        outcomeNote: String(data.get("outcomeNote") ?? "").trim(),
+      }) });
+      const result = await response.json() as { setup?: Setup; error?: string };
+      if (!response.ok || !result.setup) throw new Error(result.error ?? "Unable to save the outcome.");
+      setSetups((current) => current.map((item) => item.id === result.setup?.id ? result.setup : item));
+      setModal(null);
+      setNotice(`${selected.symbol} now has an outcome.`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Unable to save the outcome.");
+    } finally {
+      setSaving(false);
+    }
   }
 
   function importCsv(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = () => {
+    reader.onload = async () => {
       try {
         const lines = String(reader.result).split(/\r?\n/).filter(Boolean);
         const headers = parseCsvLine(lines[0]).map((header) => header.toLowerCase());
@@ -161,22 +172,38 @@ export default function Home() {
             outcomeNote: get("outcomenote") || undefined,
           } satisfies Setup;
         });
-        setSetups((current) => [...imported, ...current]);
+        setSaving(true);
+        const response = await fetch("/api/setups", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(imported) });
+        const result = await response.json() as { setups?: Setup[]; error?: string };
+        if (!response.ok || !result.setups) throw new Error(result.error ?? "Unable to import records.");
+        setSetups((current) => [...result.setups!, ...current]);
         setModal(null);
-        setNotice(`${imported.length} record${imported.length === 1 ? "" : "s"} imported.`);
-      } catch {
-        setNotice("That file does not match the ThesisLoop CSV format.");
+        setNotice(`${result.setups.length} record${result.setups.length === 1 ? "" : "s"} imported.`);
+      } catch (error) {
+        setNotice(error instanceof Error ? error.message : "That file does not match the ThesisLoop CSV format.");
+      } finally {
+        setSaving(false);
       }
       event.target.value = "";
     };
     reader.readAsText(file);
   }
 
-  function resetDemo() {
-    setSetups(seed);
-    setSelectedId(1);
-    setTab("overview");
-    setNotice("Demo data restored.");
+  async function resetDemo() {
+    setSaving(true);
+    try {
+      const response = await fetch("/api/setups/reset", { method: "POST" });
+      const result = await response.json() as { setups?: Setup[]; error?: string };
+      if (!response.ok || !result.setups) throw new Error(result.error ?? "Unable to restore demo data.");
+      setSetups(result.setups);
+      setSelectedId(result.setups[0]?.id ?? 0);
+      setTab("overview");
+      setNotice("Demo data restored.");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Unable to restore demo data.");
+    } finally {
+      setSaving(false);
+    }
   }
 
   function downloadTemplate() {
@@ -203,19 +230,22 @@ export default function Home() {
             <button key={item} className={`nav-item ${tab === item ? "active" : ""}`} onClick={() => setTab(item)}><span>0{index + 1}</span> {item[0].toUpperCase() + item.slice(1)}{item === "setups" && <b>{open.length}</b>}</button>
           ))}
         </nav>
-        <div className="side-note"><span className="status-dot" /> Local demo<p>Your data stays in this browser.</p><button onClick={resetDemo}>Reset demo data</button></div>
+        <div className="side-note"><span className="status-dot" /> Connected demo<p>Records are saved in the demo database.</p><button onClick={resetDemo} disabled={saving}>Reset demo data</button></div>
       </aside>
 
       <section className="workspace">
         <header className="topbar">
           <div><p className="eyebrow">{tab === "overview" ? "Research review" : tab}</p><h1>{tab === "overview" ? "Know what actually worked." : tab === "setups" ? "Your open ideas." : tab === "trades" ? "The outcome, not the story." : "Patterns from your own decisions."}</h1><p className="subtitle">{tab === "overview" ? "Connect every market idea to the decision and its outcome." : tab === "setups" ? "Keep the original reasoning visible before the market changes your memory." : tab === "trades" ? "Review what happened and whether you followed the plan." : "Learn which sources, setups and habits have earned your trust."}</p></div>
-          <div className="header-actions"><input ref={fileRef} className="file-input" type="file" accept=".csv,text/csv" onChange={importCsv} /><button className="button secondary" onClick={() => setModal("import")}>Import CSV</button><button className="button primary" onClick={() => setModal("record")}>Record a setup <span>+</span></button></div>
+          <div className="header-actions"><input ref={fileRef} className="file-input" type="file" accept=".csv,text/csv" onChange={importCsv} /><button className="button secondary" disabled={saving} onClick={() => setModal("import")}>Import CSV</button><button className="button primary" disabled={saving} onClick={() => setModal("record")}>Record a setup <span>+</span></button></div>
         </header>
 
-        {tab === "overview" && <>
+        {loading && <div className="system-state"><span className="loading-dot" /> Loading saved research...</div>}
+        {loadError && <div className="system-state error-state"><div><strong>The database could not be reached.</strong><p>{loadError}</p></div><button className="button secondary" onClick={() => window.location.reload()}>Try again</button></div>}
+
+        {!loading && !loadError && tab === "overview" && <>
           <div className="metrics" aria-label="Account summary">
             <article><span>Open theses</span><strong>{open.length}</strong><small>{open.filter((item) => daysSince(item.createdAt).match(/[7-9]|\d{2}/)).length} need a review</small></article>
-            <article><span>Closed trades</span><strong>{closed.length}</strong><small>Stored in this browser</small></article>
+            <article><span>Closed trades</span><strong>{closed.length}</strong><small>Saved in the demo database</small></article>
             <article><span>Plan adherence</span><strong>{quality}%</strong><small className={quality >= 70 ? "positive" : "negative"}>{followed} of {closed.length} followed plan</small></article>
             <article><span>Best source</span><strong className="word-metric">{bestSource}</strong><small>By average outcome</small></article>
           </div>
@@ -225,16 +255,16 @@ export default function Home() {
           </div>
         </>}
 
-        {tab === "setups" && <div className="single-grid"><SetupTable title="Open setups" eyebrow="Original reasoning" items={open} selectedId={selected?.id} onSelect={selectSetup} empty="No open setups." />{selected?.status === "open" && <ThesisCard item={selected} onClose={() => setModal("close")} />}</div>}
+        {!loading && !loadError && tab === "setups" && <div className="single-grid"><SetupTable title="Open setups" eyebrow="Original reasoning" items={open} selectedId={selected?.id} onSelect={selectSetup} empty="No open setups." />{selected?.status === "open" && <ThesisCard item={selected} onClose={() => setModal("close")} />}</div>}
 
-        {tab === "trades" && <div className="single-grid"><SetupTable title="Completed reviews" eyebrow="Trade history" items={closed} selectedId={selected?.id} onSelect={selectSetup} empty="No closed trades yet." />{selected?.status === "closed" && <ThesisCard item={selected} onClose={() => undefined} />}</div>}
+        {!loading && !loadError && tab === "trades" && <div className="single-grid"><SetupTable title="Completed reviews" eyebrow="Trade history" items={closed} selectedId={selected?.id} onSelect={selectSetup} empty="No closed trades yet." />{selected?.status === "closed" && <ThesisCard item={selected} onClose={() => undefined} />}</div>}
 
-        {tab === "insights" && <Insights sources={sources} closed={closed} />}
+        {!loading && !loadError && tab === "insights" && <Insights sources={sources} closed={closed} />}
       </section>
 
-      {modal === "record" && <Modal title="Record the idea before the outcome" onClose={() => setModal(null)}><form onSubmit={saveSetup} className="form-grid"><label>Symbol<input name="symbol" required placeholder="NVDA" maxLength={8} /></label><label>Setup<input name="setup" required placeholder="Breakout" /></label><label>Found through<input name="source" required placeholder="Momentum leaders" /></label><label>Planned risk (%)<input name="risk" required type="number" min="0.1" max="100" step="0.1" placeholder="2.0" /></label><label>Date<input name="date" required type="date" defaultValue={new Date().toISOString().slice(0, 10)} /></label><label className="full">Original thesis<textarea name="thesis" required rows={4} placeholder="What did you see and what would prove this idea wrong?" /></label><div className="form-actions full"><button type="button" className="button secondary" onClick={() => setModal(null)}>Cancel</button><button className="button primary">Save setup</button></div></form></Modal>}
+      {modal === "record" && <Modal title="Record the idea before the outcome" onClose={() => setModal(null)}><form onSubmit={saveSetup} className="form-grid"><label>Symbol<input name="symbol" required placeholder="NVDA" maxLength={8} /></label><label>Setup<input name="setup" required placeholder="Breakout" /></label><label>Found through<input name="source" required placeholder="Momentum leaders" /></label><label>Planned risk (%)<input name="risk" required type="number" min="0.1" max="100" step="0.1" placeholder="2.0" /></label><label>Date<input name="date" required type="date" defaultValue={new Date().toISOString().slice(0, 10)} /></label><label className="full">Original thesis<textarea name="thesis" required rows={4} placeholder="What did you see and what would prove this idea wrong?" /></label><div className="form-actions full"><button type="button" className="button secondary" disabled={saving} onClick={() => setModal(null)}>Cancel</button><button className="button primary" disabled={saving}>{saving ? "Saving..." : "Save setup"}</button></div></form></Modal>}
 
-      {modal === "close" && selected && <Modal title={`Close the loop on ${selected.symbol}`} onClose={() => setModal(null)}><form onSubmit={closeLoop} className="form-grid"><label>Return (%)<input name="returnPct" required type="number" step="0.1" placeholder="4.2" /></label><label>Did you follow the plan?<select name="followedPlan" required defaultValue=""><option value="" disabled>Select one</option><option value="yes">Yes</option><option value="no">No</option></select></label><label className="full">What actually happened?<textarea name="outcomeNote" required rows={4} placeholder="Record the decision, not only the market move." /></label><div className="original-box full"><span>Original thesis</span><p>{selected.thesis}</p></div><div className="form-actions full"><button type="button" className="button secondary" onClick={() => setModal(null)}>Cancel</button><button className="button primary">Save outcome</button></div></form></Modal>}
+      {modal === "close" && selected && <Modal title={`Close the loop on ${selected.symbol}`} onClose={() => setModal(null)}><form onSubmit={closeLoop} className="form-grid"><label>Return (%)<input name="returnPct" required type="number" step="0.1" placeholder="4.2" /></label><label>Did you follow the plan?<select name="followedPlan" required defaultValue=""><option value="" disabled>Select one</option><option value="yes">Yes</option><option value="no">No</option></select></label><label className="full">What actually happened?<textarea name="outcomeNote" required rows={4} placeholder="Record the decision, not only the market move." /></label><div className="original-box full"><span>Original thesis</span><p>{selected.thesis}</p></div><div className="form-actions full"><button type="button" className="button secondary" disabled={saving} onClick={() => setModal(null)}>Cancel</button><button className="button primary" disabled={saving}>{saving ? "Saving..." : "Save outcome"}</button></div></form></Modal>}
 
       {modal === "import" && <Modal title="Import past decisions" onClose={() => setModal(null)}><div className="import-panel"><p>Use the template so every trade stays connected to its setup, source and original thesis. Open and closed records can be imported together.</p><div className="header-list"><span>Required headers</span><code>symbol, setup, source, thesis, plannedRisk, createdAt</code></div><div className="form-actions"><button className="button secondary" onClick={downloadTemplate}>Download template</button><button className="button primary" onClick={() => fileRef.current?.click()}>Choose CSV</button></div></div></Modal>}
 
