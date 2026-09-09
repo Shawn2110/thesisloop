@@ -227,7 +227,7 @@ export default function Home() {
         <div className="brand-row"><span className="brand-mark">T</span><div><strong>ThesisLoop</strong><span>Research with memory</span></div></div>
         <nav aria-label="Primary navigation">
           {(["overview", "setups", "trades", "insights"] as Tab[]).map((item, index) => (
-            <button key={item} className={`nav-item ${tab === item ? "active" : ""}`} onClick={() => setTab(item)}><span>0{index + 1}</span> {item[0].toUpperCase() + item.slice(1)}{item === "setups" && <b>{open.length}</b>}</button>
+            <button key={item} aria-label={`Open ${item}`} className={`nav-item ${tab === item ? "active" : ""}`} onClick={() => setTab(item)}><span className="nav-index">0{index + 1}</span><span className="nav-label">{item[0].toUpperCase() + item.slice(1)}</span>{item === "setups" && <b>{open.length}</b>}</button>
           ))}
         </nav>
         <div className="side-note"><span className="status-dot" /> Connected demo<p>Records are saved in the demo database.</p><button onClick={resetDemo} disabled={saving}>Reset demo data</button></div>
