@@ -1,0 +1,19 @@
+@media (max-width: 600px) {
+  .detail-active .capture-button {
+    display: none;
+  }
+
+  .detail-active .inspector-panel {
+    padding-bottom: 118px;
+  }
+
+  .detail-active .close-zone {
+    position: fixed;
+    right: 11px;
+    bottom: 62px;
+    left: 11px;
+    z-index: 25;
+    margin: 0;
+    box-shadow: 0 -8px 30px #050608cc;
+  }
+}
